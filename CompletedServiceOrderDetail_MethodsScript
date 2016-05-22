@@ -1,29 +1,31 @@
 -- Get location for completed SO where SI links to SO
-SELECT SO.soID, SO.soDate, SI.LocationID
+SELECT so.ServiceOrderID, so.OrderDueDate, si.LocationID
 INTO #CompletedSODetail_DirectLocation
-FROM SO
-INNER JOIN SS ON SO.soID = SS.soID
-INNER JOIN SI ON SI.ssID = SS.ssID AND SI.soID = SO.soID
+FROM ServiceOrder so
+INNER JOIN SrvService ss ON ss.ServiceOrderID = so.ServiceOrderID
+INNER JOIN SrvItem si ON si.ServiceID = ss.ServiceID AND si.ServiceOrderID = so.ServiceOrderID
+-- select * from #CompletedSODetail_DirectLocation
 
 /* METHOD 1 */
 -- Get location for completed SO where SI does not link to SO
 -- Try to derive location for SO based on locations existing prior to the SO
-SELECT si3.soID, si3.soDate, SI.LocationID
+SELECT si3.ServiceOrderID, si3.OrderDueDate, si.LocationID
 INTO #CompletedSODetail_DerivedLocation
-FROM SI
+FROM SrvItem si
 INNER JOIN (
-			SELECT si1.soID, si1.soDate, si1.siID, MAX(si1.siDate) AS siDate
-			FROM SI si2
+			SELECT si1.ServiceOrderID, si1.OrderDueDate, si1.ItemID, MAX(si1.ModifyDate) AS ModifyDate
+			FROM SrvItem si2
 			INNER JOIN (
-						SELECT SO.soID, SO.soDate, MAX(SI.siID) AS siID, SI.siDate
-						FROM SO
-						INNER JOIN SS ON SS.soID = SO.soID
-						INNER JOIN SI ON SI.ssID = SS.ssID
-						WHERE ISNULL(SI.soID,0) <> SO.soID AND SI.siDate <= SO.soDate
-						GROUP BY SO.soID, SO.soDate, SI.siDate
-					) si1 ON si1.siID = si2.siID AND si2.siDate <= si1.soDate
-			GROUP BY si1.soID, si1.soDate, si1.siID
-		) si3 ON si3.siID = SI.siID AND SI.siDate <= si3.soDate
+						SELECT so.ServiceOrderID, so.OrderDueDate, MAX(si.ItemID) AS ItemID, si.ModifyDate
+						FROM ServiceOrder so
+						INNER JOIN SrvService ss ON ss.ServiceOrderID = so.ServiceOrderID
+						INNER JOIN SrvItem si ON si.ServiceID = ss.ServiceID
+						WHERE ISNULL(si.ServiceOrderID,0) <> so.ServiceOrderID AND si.ModifyDate <= so.OrderDueDate
+						GROUP BY so.ServiceOrderID, so.OrderDueDate, si.ModifyDate
+					) si1 ON si1.ItemID = si2.ItemID AND si2.ModifyDate <= si1.OrderDueDate
+			GROUP BY si1.ServiceOrderID, si1.OrderDueDate, si1.ItemID
+		) si3 ON si3.ItemID = si.ItemID AND si.ModifyDate <= si3.OrderDueDate
+-- select * from #CompletedSODetail_DerivedLocation
 
 SELECT *
 FROM #CompletedSODetail_DirectLocation
@@ -31,29 +33,29 @@ UNION
 SELECT t1.*
 FROM #CompletedSODetail_DerivedLocation t1
 LEFT OUTER JOIN #CompletedSODetail_DirectLocation t2 ON
-WHERE t2.soID IS NULL
+WHERE t2.ServiceOrderID IS NULL
 
 /* METHOD 2 */
-SELECT SO.soID, SO.soDate, si.LocationID
-FROM SO
+SELECT so.ServiceOrderID, so.OrderDueDate, si.LocationID
+FROM ServiceOrder so
 CROSS APPLY (
-				SELECT TOP 1 SI.LocationID
-				FROM SS
-				INNER JOIN SI ON SI.ssID = SS.ssID
-				WHERE SS.soID = SO.soID
-					AND ISNULL(SI.soID,0) <> SO.soID
-					AND SI.siDate <= SO.soDate
-				ORDER BY SI.siDate DESC, SI.siID DESC
+				SELECT TOP 1 si.LocationID
+				FROM SrvService ss
+				INNER JOIN SrvItem si ON si.ServiceID = ss.ServiceID
+				WHERE ss.ServiceOrderID = so.ServiceOrderID
+					AND ISNULL(si.ServiceOrderID,0) <> so.ServiceOrderID
+					AND si.ModifyDate <= so.OrderDueDate
+				ORDER BY si.ModifyDate DESC, si.ItemID DESC
 ) si
 
 /* METHOD 3 */
-SELECT t.soID, t.soDate, t.LocationID
+SELECT t.ServiceOrderID, t.OrderDueDate, t.ServiceID, t.ItemID, t.Version, t.ModifyDate, t.LocationID
 FROM (
-	SELECT SO.soID, SO.soDate, SI.LocationID
-		,ROW_NUMBER() OVER(PARTITION BY SI.ssID, SI.siID ORDER BY SI.siDate DESC, SI.siID DESC) AS Seq
-	FROM SO
-	INNER JOIN SS ON SS.soID = SO.soID
-	INNER JOIN SI ON SI.ssID = SS.ssID AND ISNULL(SI.soID,0) <> SO.soID
-	WHERE SI.siDate <= SO.soDate
+	SELECT so.ServiceOrderID, so.OrderDueDate, ss.ServiceID, si.ItemID, si.Version, si.ModifyDate, si.LocationID
+		,ROW_NUMBER() OVER(PARTITION BY so.ServiceOrderID ORDER BY si.ModifyDate DESC, si.ItemID DESC, si.Version DESC) AS Seq
+	FROM ServiceOrder so
+	INNER JOIN SrvService ss ON ss.ServiceOrderID = so.ServiceOrderID
+	INNER JOIN SrvItem si ON si.ServiceID = ss.ServiceID AND ISNULL(si.ServiceOrderID,0) <> so.ServiceOrderID
+	WHERE si.ModifyDate <= so.OrderDueDate
 ) t
 WHERE t.Seq = 1
